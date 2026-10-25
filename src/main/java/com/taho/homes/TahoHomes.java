@@ -134,9 +134,10 @@ public final class TahoHomes extends JavaPlugin implements Listener {
 
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (command.getName().equalsIgnoreCase("tahohomes")) {
-            if (!sender.hasPermission("tahohomes.admin")) { sender.sendMessage(LEGACY.deserialize(msg("no-permission", Map.of()))); return true; }
-            if (args.length == 1 && args[0].equalsIgnoreCase("reload")) { reloadConfig(); sender.sendMessage(LEGACY.deserialize(msg("reload", Map.of()))); }
-            else if (sender instanceof Player player && args.length >= 3 && args[0].equalsIgnoreCase("action")) {
+            if (args.length == 1 && args[0].equalsIgnoreCase("reload")) {
+                if (!sender.hasPermission("tahohomes.admin")) { sender.sendMessage(LEGACY.deserialize(msg("no-permission", Map.of()))); return true; }
+                reloadConfig(); sender.sendMessage(LEGACY.deserialize(msg("reload", Map.of())));
+            } else if (sender instanceof Player player && args.length >= 3 && args[0].equalsIgnoreCase("action")) {
                 handleHomeAction(player, args);
             } else if (sender instanceof Player player && args.length == 2 && args[0].equalsIgnoreCase("rename")) {
                 beginRename(player, args[1]);
