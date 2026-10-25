@@ -10,6 +10,8 @@ import io.papermc.paper.registry.data.dialog.action.DialogAction;
 import io.papermc.paper.registry.data.dialog.type.DialogType;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import io.papermc.paper.event.player.AsyncChatEvent;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -38,6 +40,8 @@ public final class TahoHomes extends JavaPlugin implements Listener {
     private static final LegacyComponentSerializer LEGACY = LegacyComponentSerializer.legacyAmpersand();
     private final Map<UUID, LinkedHashMap<String, Location>> homes = new HashMap<>();
     private final Set<UUID> bedrockPlayers = new HashSet<>();
+    private final Map<UUID, Map<String, Material>> homeIcons = new HashMap<>();
+    private final Map<UUID, String> pendingRename = new HashMap<>();
     private File homesFile;
     private YamlConfiguration homesData;
 
@@ -71,7 +75,11 @@ public final class TahoHomes extends JavaPlugin implements Listener {
                 if (world == null) continue;
                 Location loc = new Location(world, homesData.getDouble(path + ".x"), homesData.getDouble(path + ".y"),
                         homesData.getDouble(path + ".z"), (float) homesData.getDouble(path + ".yaw"), (float) homesData.getDouble(path + ".pitch"));
-                playerHomes.put(name.toLowerCase(Locale.ROOT), loc);
+                String homeName = name.toLowerCase(Locale.ROOT);
+                playerHomes.put(homeName, loc);
+                String iconName = homesData.getString(path + ".icon", "RED_BED");
+                Material icon = Material.matchMaterial(iconName == null ? "RED_BED" : iconName);
+                homeIcons.computeIfAbsent(uuid, ignored -> new HashMap<>()).put(homeName, icon != null && icon.isItem() ? icon : Material.RED_BED);
             }
             homes.put(uuid, playerHomes);
         }
@@ -85,6 +93,7 @@ public final class TahoHomes extends JavaPlugin implements Listener {
                 Location l = home.getValue();
                 String p = "players." + entry.getKey() + "." + home.getKey();
                 homesData.set(p + ".world", l.getWorld() == null ? null : l.getWorld().getName());
+                homesData.set(p + ".icon", homeIcons.getOrDefault(entry.getKey(), Map.of()).getOrDefault(home.getKey(), Material.RED_BED).name());
                 homesData.set(p + ".x", l.getX()); homesData.set(p + ".y", l.getY()); homesData.set(p + ".z", l.getZ());
                 homesData.set(p + ".yaw", l.getYaw()); homesData.set(p + ".pitch", l.getPitch());
             }
@@ -127,7 +136,11 @@ public final class TahoHomes extends JavaPlugin implements Listener {
         if (command.getName().equalsIgnoreCase("tahohomes")) {
             if (!sender.hasPermission("tahohomes.admin")) { sender.sendMessage(LEGACY.deserialize(msg("no-permission", Map.of()))); return true; }
             if (args.length == 1 && args[0].equalsIgnoreCase("reload")) { reloadConfig(); sender.sendMessage(LEGACY.deserialize(msg("reload", Map.of()))); }
-            else sender.sendMessage(LEGACY.deserialize("&eUsage: /tahohomes reload"));
+            else if (sender instanceof Player player && args.length >= 3 && args[0].equalsIgnoreCase("action")) {
+                handleHomeAction(player, args);
+            } else if (sender instanceof Player player && args.length == 2 && args[0].equalsIgnoreCase("rename")) {
+                beginRename(player, args[1]);
+            } else sender.sendMessage(LEGACY.deserialize("&eUsage: /tahohomes reload"));
             return true;
         }
         if (!(sender instanceof Player p)) { sender.sendMessage("This command can only be used in-game."); return true; }
@@ -177,16 +190,14 @@ public final class TahoHomes extends JavaPlugin implements Listener {
     private void openNativeDialog(Player p) {
         LinkedHashMap<String, Location> playerHomes = getHomes(p);
         List<ActionButton> actions = new ArrayList<>();
-
         for (String name : playerHomes.keySet()) {
-            DialogAction action = DialogAction.staticAction(ClickEvent.runCommand("/home " + name));
-            actions.add(ActionButton.builder(Component.text("⌂  " + name))
-                    .tooltip(Component.text("Teleport to " + name))
+            Material icon = homeIcons.getOrDefault(p.getUniqueId(), Map.of()).getOrDefault(name, Material.RED_BED);
+            actions.add(ActionButton.builder(Component.text(iconDisplay(icon) + "  " + name))
+                    .tooltip(Component.text("Open options for " + name))
                     .width(180)
-                    .action(action)
+                    .action(DialogAction.staticAction(ClickEvent.runCommand("/tahohomes action " + name + " open")))
                     .build());
         }
-
         if (playerHomes.size() < homeLimit(p)) {
             String nextName = nextHomeName(playerHomes);
             actions.add(ActionButton.builder(Component.text("＋  Set home " + nextName))
@@ -195,26 +206,136 @@ public final class TahoHomes extends JavaPlugin implements Listener {
                     .action(DialogAction.staticAction(ClickEvent.runCommand("/sethome " + nextName)))
                     .build());
         }
-
         if (actions.isEmpty()) {
             actions.add(ActionButton.builder(Component.text("No homes yet"))
-                    .tooltip(Component.text("Use the button below to create your first home"))
-                    .width(180)
-                    .build());
+                    .tooltip(Component.text("Create your first home with /sethome <name>"))
+                    .width(180).build());
         }
-
         DialogBase base = DialogBase.builder(Component.text("Your Homes"))
                 .body(List.of(DialogBody.plainMessage(
-                        Component.text("Select a home to teleport instantly.\nHomes: " + playerHomes.size() + " / " +
-                                (homeLimit(p) == Integer.MAX_VALUE ? "∞" : homeLimit(p)) +
-                                "\nUse /delhome <name> to delete a home."),
-                        350)))
-                .canCloseWithEscape(true)
-                .build();
-
-        DialogType type = DialogType.multiAction(actions, null, 2);
-        Dialog dialog = Dialog.create(factory -> factory.empty().base(base).type(type));
+                        Component.text("Select a home to manage it.\\nHomes: " + playerHomes.size() + " / " +
+                                (homeLimit(p) == Integer.MAX_VALUE ? "∞" : homeLimit(p))), 350)))
+                .canCloseWithEscape(true).build();
+        Dialog dialog = Dialog.create(factory -> factory.empty().base(base).type(DialogType.multiAction(actions, null, 2)));
         p.showDialog(dialog);
+    }
+
+    private void openHomeActions(Player p, String name) {
+        Location location = getHomes(p).get(name);
+        if (location == null) { send(p, "missing", "home", name); openNativeDialog(p); return; }
+        Material icon = homeIcons.getOrDefault(p.getUniqueId(), Map.of()).getOrDefault(name, Material.RED_BED);
+        List<ActionButton> buttons = List.of(
+                ActionButton.builder(Component.text("Teleport"))
+                        .tooltip(Component.text("Teleport to this home"))
+                        .width(180).action(DialogAction.staticAction(ClickEvent.runCommand("/tahohomes action " + name + " teleport"))).build(),
+                ActionButton.builder(Component.text("Rename"))
+                        .tooltip(Component.text("Choose a new name for this home"))
+                        .width(180).action(DialogAction.staticAction(ClickEvent.runCommand("/tahohomes rename " + name))).build(),
+                ActionButton.builder(Component.text("Delete"))
+                        .tooltip(Component.text("Permanently delete this home"))
+                        .width(180).action(DialogAction.staticAction(ClickEvent.runCommand("/tahohomes action " + name + " delete"))).build(),
+                ActionButton.builder(Component.text("Change Icon"))
+                        .tooltip(Component.text("Current icon: " + icon.name()))
+                        .width(180).action(DialogAction.staticAction(ClickEvent.runCommand("/tahohomes action " + name + " icons"))).build()
+        );
+        DialogBase base = DialogBase.builder(Component.text("Home: " + name))
+                .body(List.of(DialogBody.plainMessage(Component.text("Choose what to do with this home."), 300)))
+                .canCloseWithEscape(true).build();
+        p.showDialog(Dialog.create(factory -> factory.empty().base(base).type(DialogType.multiAction(buttons, null, 2))));
+    }
+
+    private void openIconPicker(Player p, String name) {
+        Material[] icons = {Material.RED_BED, Material.BLUE_BED, Material.GREEN_BED, Material.CHEST, Material.ENDER_CHEST,
+                Material.OAK_DOOR, Material.DIAMOND, Material.EMERALD, Material.NETHER_STAR, Material.BEACON,
+                Material.GRASS_BLOCK, Material.OAK_SAPLING, Material.CRAFTING_TABLE, Material.ANVIL, Material.GOLD_INGOT,
+                Material.DIAMOND_BLOCK, Material.TNT, Material.ENDER_PEARL};
+        List<ActionButton> buttons = new ArrayList<>();
+        for (Material icon : icons) {
+            buttons.add(ActionButton.builder(Component.text(iconDisplay(icon) + " " + prettyMaterial(icon)))
+                    .tooltip(Component.text("Use " + prettyMaterial(icon) + " as the home icon"))
+                    .width(180).action(DialogAction.staticAction(ClickEvent.runCommand("/tahohomes action " + name + " icon_" + icon.name()))).build());
+        }
+        DialogBase base = DialogBase.builder(Component.text("Choose Home Icon"))
+                .body(List.of(DialogBody.plainMessage(Component.text("Select an icon for " + name + "."), 300)))
+                .canCloseWithEscape(true).build();
+        p.showDialog(Dialog.create(factory -> factory.empty().base(base).type(DialogType.multiAction(buttons, null, 2))));
+    }
+
+    private void handleHomeAction(Player p, String[] args) {
+        if (args.length < 3) return;
+        String name = args[1].toLowerCase(Locale.ROOT);
+        String action = args[2].toLowerCase(Locale.ROOT);
+        if (!getHomes(p).containsKey(name)) { send(p, "missing", "home", name); openNativeDialog(p); return; }
+        switch (action) {
+            case "open" -> openHomeActions(p, name);
+            case "teleport" -> teleportHome(p, name);
+            case "delete" -> {
+                getHomes(p).remove(name);
+                homeIcons.getOrDefault(p.getUniqueId(), Map.of()).remove(name);
+                saveHomes();
+                p.sendMessage(LEGACY.deserialize(msg("deleted", Map.of("home", name))));
+                openNativeDialog(p);
+            }
+            case "icons" -> openIconPicker(p, name);
+            default -> {
+                if (action.startsWith("icon_")) {
+                    Material icon = Material.matchMaterial(action.substring(5).toUpperCase(Locale.ROOT));
+                    if (icon == null || !icon.isItem()) { p.sendMessage(LEGACY.deserialize("&cInvalid icon.")); return; }
+                    homeIcons.computeIfAbsent(p.getUniqueId(), ignored -> new HashMap<>()).put(name, icon);
+                    saveHomes();
+                    p.sendMessage(LEGACY.deserialize("&aIcon updated for home &f" + name + "&a."));
+                    openHomeActions(p, name);
+                }
+            }
+        }
+    }
+
+    private void beginRename(Player p, String oldName) {
+        oldName = oldName.toLowerCase(Locale.ROOT);
+        if (!getHomes(p).containsKey(oldName)) { send(p, "missing", "home", oldName); return; }
+        pendingRename.put(p.getUniqueId(), oldName);
+        p.closeInventory();
+        p.sendMessage(LEGACY.deserialize("&eType the new name for home &f" + oldName + "&e in chat. Type &fcancel &eto abort."));
+    }
+
+    @EventHandler public void onRenameChat(AsyncChatEvent event) {
+        Player p = event.getPlayer();
+        String oldName = pendingRename.get(p.getUniqueId());
+        if (oldName == null) return;
+        event.setCancelled(true);
+        String newName = PlainTextComponentSerializer.plainText().serialize(event.message()).trim().toLowerCase(Locale.ROOT);
+        Bukkit.getScheduler().runTask(this, () -> {
+            pendingRename.remove(p.getUniqueId());
+            if (newName.equalsIgnoreCase("cancel")) { p.sendMessage(LEGACY.deserialize("&7Rename cancelled.")); return; }
+            if (!VALID_NAME.matcher(newName).matches()) { p.sendMessage(LEGACY.deserialize("&cInvalid name. Use 1-16 letters, numbers, _ or -.")); return; }
+            LinkedHashMap<String, Location> map = getHomes(p);
+            if (!map.containsKey(oldName)) { send(p, "missing", "home", oldName); return; }
+            if (map.containsKey(newName) && !newName.equals(oldName)) { p.sendMessage(LEGACY.deserialize("&cThat home name already exists.")); return; }
+            Location loc = map.remove(oldName);
+            map.put(newName, loc);
+            Map<String, Material> icons = homeIcons.computeIfAbsent(p.getUniqueId(), ignored -> new HashMap<>());
+            Material icon = icons.remove(oldName);
+            if (icon != null) icons.put(newName, icon);
+            saveHomes();
+            p.sendMessage(LEGACY.deserialize(msg("renamed", Map.of("home", newName))));
+            openNativeDialog(p);
+        });
+    }
+
+    private String iconDisplay(Material material) {
+        return switch (material) {
+            case RED_BED, BLUE_BED, GREEN_BED -> "⌂";
+            case CHEST, ENDER_CHEST -> "▣";
+            case DIAMOND, DIAMOND_BLOCK -> "◆";
+            case EMERALD -> "♦";
+            case NETHER_STAR, BEACON -> "✦";
+            case TNT -> "✹";
+            default -> "●";
+        };
+    }
+
+    private String prettyMaterial(Material material) {
+        return material.name().toLowerCase(Locale.ROOT).replace('_', ' ').replaceAll("\\b\\w", m -> m.group().toUpperCase(Locale.ROOT));
     }
 
     private String nextHomeName(Map<String, Location> playerHomes) {
