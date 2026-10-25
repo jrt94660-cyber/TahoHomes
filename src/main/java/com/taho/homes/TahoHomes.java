@@ -2,6 +2,12 @@ package com.taho.homes;
 
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
+import io.papermc.paper.dialog.Dialog;
+import io.papermc.paper.registry.data.dialog.ActionButton;
+import io.papermc.paper.registry.data.dialog.DialogBase;
+import io.papermc.paper.registry.data.dialog.body.DialogBody;
+import io.papermc.paper.registry.data.dialog.action.DialogAction;
+import io.papermc.paper.registry.data.dialog.type.DialogType;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Bukkit;
@@ -23,7 +29,6 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.io.IOException;
-import java.lang.reflect.Method;
 import java.util.*;
 import java.util.regex.Pattern;
 
@@ -136,8 +141,9 @@ public final class TahoHomes extends JavaPlugin implements Listener {
             map.put(name, p.getLocation().clone()); saveHomes(); send(p, "set", "home", name); return true;
         }
         if (cmd.equals("home")) {
-            if (args.length != 1) { send(p, "usage-home"); return true; }
-            teleportHome(p, args[0]); return true;
+            if (args.length == 0) { openHomes(p); return true; }
+            if (args.length == 1) { teleportHome(p, args[0]); return true; }
+            send(p, "usage-home"); return true;
         }
         if (cmd.equals("delhome") || cmd.equals("deletehome")) {
             if (args.length != 1) { send(p, "usage-delete"); return true; }
@@ -157,61 +163,63 @@ public final class TahoHomes extends JavaPlugin implements Listener {
     }
 
     private void openHomes(Player p) {
-        if (getHomes(p).isEmpty()) { send(p, "no-homes"); }
         if (isBedrock(p)) { openBedrockMenu(p); return; }
-        // Paper's native dialog API is used for Java players on supported Paper builds.
-        try { openNativeDialog(p); }
-        catch (Throwable ex) {
-            getLogger().warning("Native dialog could not be opened; using inventory fallback: " + ex.getMessage());
+        try {
+            openNativeDialog(p);
+        } catch (Throwable ex) {
+            getLogger().warning("Could not open Paper native homes dialog for " + p.getName() + ": " + ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            p.sendMessage(LEGACY.deserialize("&cYour client/server does not support the native homes screen. Opening the compatibility menu."));
             openBedrockMenu(p);
         }
     }
 
-    private void openNativeDialog(Player p) throws Exception {
-        Class<?> dialogClass = Class.forName("org.bukkit.dialog.Dialog");
-        Class<?> baseClass = Class.forName("org.bukkit.dialog.DialogBase");
-        Class<?> actionClass = Class.forName("org.bukkit.dialog.DialogAction");
-        Class<?> typeClass = Class.forName("org.bukkit.dialog.DialogType");
-        Class<?> plainBodyClass = Class.forName("org.bukkit.dialog.body.PlainMessageDialogBody");
-        Class<?> dialogBaseBuilderClass = Class.forName("org.bukkit.dialog.DialogBase$Builder");
-        Object baseBuilder = baseClass.getMethod("builder", Component.class).invoke(null, Component.text("Your Homes"));
-        List<Object> bodies = new ArrayList<>();
-        Object body = plainBodyClass.getConstructor(Component.class, int.class).newInstance(Component.text("Select a home to teleport. Use /sethome, /delhome, or /home to manage homes."), 200);
-        bodies.add(body);
-        dialogBaseBuilderClass.getMethod("body", List.class).invoke(baseBuilder, bodies);
-        Object base = dialogBaseBuilderClass.getMethod("build").invoke(baseBuilder);
+    private void openNativeDialog(Player p) {
+        LinkedHashMap<String, Location> playerHomes = getHomes(p);
+        List<ActionButton> actions = new ArrayList<>();
 
-        List<Object> actions = new ArrayList<>();
-        for (String name : getHomes(p).keySet()) {
-            ClickEvent click = ClickEvent.callback(audience -> {
-                if (p.isOnline()) Bukkit.getScheduler().runTask(this, () -> teleportHome(p, name));
-            });
-            Object actionBuilder;
-            try {
-                actionBuilder = actionClass.getMethod("builder", ClickEvent.class).invoke(null, click);
-            } catch (NoSuchMethodException olderApi) {
-                actionBuilder = actionClass.getMethod("builder", Component.class).invoke(null, Component.text("⌂ " + name));
-                try { actionClass.getMethod("clickEvent", ClickEvent.class).invoke(actionBuilder, click); } catch (ReflectiveOperationException ignored) {}
-            }
-            try { actionBuilder.getClass().getMethod("label", Component.class).invoke(actionBuilder, Component.text("⌂ " + name)); } catch (ReflectiveOperationException ignored) {}
-            actions.add(actionBuilder.getClass().getMethod("build").invoke(actionBuilder));
+        for (String name : playerHomes.keySet()) {
+            DialogAction action = DialogAction.staticAction(ClickEvent.runCommand("/home " + name));
+            actions.add(ActionButton.builder(Component.text("⌂  " + name))
+                    .tooltip(Component.text("Teleport to " + name))
+                    .width(180)
+                    .action(action)
+                    .build());
         }
-        if (actions.isEmpty()) actions.add(actionClass.getMethod("builder", Component.class).invoke(null, Component.text("No homes yet")).getClass().getMethod("build").invoke(actionClass.getMethod("builder", Component.class).invoke(null, Component.text("No homes yet"))));
-        Object type = null;
-        for (Method m : typeClass.getMethods()) {
-            if (m.getName().equals("multiAction") && m.getParameterCount() == 2) {
-                type = m.invoke(null, actions, null); break;
-            }
+
+        if (playerHomes.size() < homeLimit(p)) {
+            String nextName = nextHomeName(playerHomes);
+            actions.add(ActionButton.builder(Component.text("＋  Set home " + nextName))
+                    .tooltip(Component.text("Save your current location as a new home"))
+                    .width(180)
+                    .action(DialogAction.staticAction(ClickEvent.runCommand("/sethome " + nextName)))
+                    .build());
         }
-        if (type == null) throw new NoSuchMethodException("Paper DialogType.multiAction is unavailable");
-        final Object dialogType = type;
-        Object builder = dialogClass.getMethod("create", java.util.function.Consumer.class).invoke(null, (java.util.function.Consumer<Object>) b -> {
-            try {
-                b.getClass().getMethod("base", baseClass).invoke(b, base);
-                b.getClass().getMethod("type", typeClass).invoke(b, dialogType);
-            } catch (ReflectiveOperationException e) { throw new RuntimeException(e); }
-        });
-        Player.class.getMethod("showDialog", dialogClass).invoke(p, builder);
+
+        if (actions.isEmpty()) {
+            actions.add(ActionButton.builder(Component.text("No homes yet"))
+                    .tooltip(Component.text("Use the button below to create your first home"))
+                    .width(180)
+                    .build());
+        }
+
+        DialogBase base = DialogBase.builder(Component.text("Your Homes"))
+                .body(List.of(DialogBody.plainMessage(
+                        Component.text("Select a home to teleport instantly.\nHomes: " + playerHomes.size() + " / " +
+                                (homeLimit(p) == Integer.MAX_VALUE ? "∞" : homeLimit(p)) +
+                                "\nUse /delhome <name> to delete a home."),
+                        350)))
+                .canCloseWithEscape(true)
+                .build();
+
+        DialogType type = DialogType.multiAction(actions, null, 2);
+        Dialog dialog = Dialog.create(factory -> factory.empty().base(base).type(type));
+        p.showDialog(dialog);
+    }
+
+    private String nextHomeName(Map<String, Location> playerHomes) {
+        int index = 1;
+        while (playerHomes.containsKey(String.valueOf(index))) index++;
+        return String.valueOf(index);
     }
 
     private void openBedrockMenu(Player p) {
