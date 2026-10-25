@@ -1,0 +1,31 @@
+name: TahoHomes
+version: 1.0.0
+main: com.taho.homes.TahoHomes
+api-version: '1.21'
+author: Taho
+description: DonutSMP-style homes with Java dialogs and Bedrock chest menus.
+softdepend: [floodgate, LuckPerms]
+commands:
+  homes:
+    description: Open your homes menu
+    usage: /homes
+    aliases: [homelist]
+  home:
+    description: Teleport to a home
+    usage: /home <name>
+  sethome:
+    description: Set a home at your current location
+    usage: /sethome <name>
+  delhome:
+    description: Delete one of your homes
+    usage: /delhome <name>
+    aliases: [deletehome]
+  tahohomes:
+    description: TahoHomes administration
+    usage: /tahohomes reload
+    permission: tahohomes.admin
+permissions:
+  tahohomes.admin:
+    default: op
+  tahohomes.bypass:
+    default: op
