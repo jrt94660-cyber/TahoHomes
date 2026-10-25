@@ -204,10 +204,11 @@ public final class TahoHomes extends JavaPlugin implements Listener {
             }
         }
         if (type == null) throw new NoSuchMethodException("Paper DialogType.multiAction is unavailable");
+        final Object dialogType = type;
         Object builder = dialogClass.getMethod("create", java.util.function.Consumer.class).invoke(null, (java.util.function.Consumer<Object>) b -> {
             try {
                 b.getClass().getMethod("base", baseClass).invoke(b, base);
-                b.getClass().getMethod("type", typeClass).invoke(b, type);
+                b.getClass().getMethod("type", typeClass).invoke(b, dialogType);
             } catch (ReflectiveOperationException e) { throw new RuntimeException(e); }
         });
         Player.class.getMethod("showDialog", dialogClass).invoke(p, builder);
