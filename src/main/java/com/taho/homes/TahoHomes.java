@@ -420,7 +420,7 @@ public final class TahoHomes extends JavaPlugin implements Listener {
             if (icon != null) icons.put(newName, icon);
             saveHomes();
             p.sendMessage(LEGACY.deserialize(msg("renamed", Map.of("home", newName))));
-            openJavaHomesMenu(p);
+            openNativeDialog(p);
         });
     }
 
@@ -500,6 +500,7 @@ public final class TahoHomes extends JavaPlugin implements Listener {
 
     @EventHandler public void onMenuClick(InventoryClickEvent e) {
         if (!(e.getWhoClicked() instanceof Player p)) return;
+        String title = LEGACY.serialize(e.getView().title());
         if (!bedrockPlayers.contains(p.getUniqueId())) return;
         boolean homesMenu = title.equals(LEGACY.serialize(LEGACY.deserialize("&8Your Homes")));
         boolean actionMenu = title.startsWith(LEGACY.serialize(LEGACY.deserialize("&8Home: ")));
