@@ -331,7 +331,10 @@ public final class TahoHomes extends JavaPlugin implements Listener {
         if (title.startsWith(LEGACY.serialize(LEGACY.deserialize("&8Choose Icon: ")))) {
             IconPickerState state = iconPickerStates.get(p.getUniqueId());
             if (state == null) return;
-            if (raw < 45 && clicked.getType().isItem()) { selectHomeIcon(p, state.homeName(), clicked.getType()); return; }
+            if (raw < 45 && !display.equals("§r") && !display.isBlank() && clicked.getType().isItem()) {
+                selectHomeIcon(p, state.homeName(), clicked.getType());
+                return;
+            }
             if (raw == 45) { openIconSearch(p, state.homeName(), state.query()); return; }
             if (raw == 48) { openIconResults(p, state.homeName(), state.query(), state.page() - 1); return; }
             if (raw == 50) { openIconResults(p, state.homeName(), state.query(), state.page() + 1); return; }
@@ -479,7 +482,8 @@ public final class TahoHomes extends JavaPlugin implements Listener {
         if (display.contains("Rename")) { bedrockSelectedHome.remove(p.getUniqueId()); beginRename(p, name); return; }
         if (display.contains("Delete")) {
             getHomes(p).remove(name);
-            homeIcons.getOrDefault(p.getUniqueId(), Map.of()).remove(name);
+            Map<String, Material> icons = homeIcons.get(p.getUniqueId());
+            if (icons != null) icons.remove(name);
             saveHomes();
             bedrockSelectedHome.remove(p.getUniqueId());
             p.sendMessage(LEGACY.deserialize(msg("deleted", Map.of("home", name))));
