@@ -42,6 +42,7 @@ public final class TahoHomes extends JavaPlugin implements Listener {
     private final Set<UUID> bedrockPlayers = new HashSet<>();
     private final Map<UUID, Map<String, Material>> homeIcons = new HashMap<>();
     private final Map<UUID, String> pendingRename = new HashMap<>();
+    private final Map<UUID, String> bedrockSelectedHome = new HashMap<>();
     private File homesFile;
     private YamlConfiguration homesData;
 
@@ -353,14 +354,38 @@ public final class TahoHomes extends JavaPlugin implements Listener {
         ItemStack filler = item(Material.GRAY_STAINED_GLASS_PANE, "&r", List.of());
         for (int i = 0; i < inv.getSize(); i++) inv.setItem(i, filler);
         LinkedHashMap<String, Location> map = getHomes(p);
+        int limit = homeLimit(p);
         int[] slots = {10,11,12,13,14,15,16,19,20,21,22,23,24,25,28,29,30,31,32,33,34,37,38,39,40,41,42,43};
-        int index = 0;
-        for (String name : map.keySet()) {
-            if (index >= slots.length) break;
-            inv.setItem(slots[index++], item(Material.RED_BED, "&6" + name, List.of("&7Click to teleport", "&8Left-click: Teleport", "&8Right-click: Delete")));
+        for (int index = 0; index < slots.length; index++) {
+            if (index < map.size()) {
+                String name = new ArrayList<>(map.keySet()).get(index);
+                Material icon = homeIcons.getOrDefault(p.getUniqueId(), Map.of()).getOrDefault(name, Material.RED_BED);
+                inv.setItem(slots[index], item(Material.BROWN_BED, "&6" + name,
+                        List.of("&7Home is set", "&7Icon: &f" + prettyMaterial(icon), "&eClick to manage this home")));
+            } else if (index < limit) {
+                inv.setItem(slots[index], item(Material.WHITE_BED, "&fEmpty Home Slot",
+                        List.of("&7No home set here", "&7Use &f/sethome <name> &7to create one")));
+            } else {
+                inv.setItem(slots[index], item(Material.RED_BED, "&cLocked Home Slot",
+                        List.of("&7This slot is locked", "&7Your rank allows &f" + limit + " &7homes")));
+            }
         }
-        if (map.size() < homeLimit(p)) inv.setItem(49, item(Material.LIME_BED, "&aSet a home", List.of("&7Use &f/sethome <name>", "&7to create a new home.")));
+        inv.setItem(49, item(Material.LIME_BED, "&aSet a home", List.of("&7Use &f/sethome <name>", "&7to create a new home.")));
         inv.setItem(45, item(Material.BARRIER, "&cClose", List.of()));
+        p.openInventory(inv);
+        bedrockPlayers.add(p.getUniqueId());
+    }
+
+    private void openBedrockHomeActions(Player p, String name) {
+        if (!getHomes(p).containsKey(name)) { openBedrockMenu(p); return; }
+        Inventory inv = Bukkit.createInventory(null, 27, LEGACY.deserialize("&8Home: " + name));
+        ItemStack filler = item(Material.GRAY_STAINED_GLASS_PANE, "&r", List.of());
+        for (int i = 0; i < inv.getSize(); i++) inv.setItem(i, filler);
+        inv.setItem(11, item(Material.BLUE_DYE, "&9Teleport", List.of("&7Teleport to this home")));
+        inv.setItem(13, item(Material.YELLOW_DYE, "&eRename", List.of("&7Rename this home using chat")));
+        inv.setItem(15, item(Material.RED_DYE, "&cDelete", List.of("&7Delete this home")));
+        inv.setItem(22, item(Material.BARRIER, "&cBack", List.of("&7Return to your homes")));
+        bedrockSelectedHome.put(p.getUniqueId(), name);
         p.openInventory(inv);
         bedrockPlayers.add(p.getUniqueId());
     }
@@ -375,19 +400,36 @@ public final class TahoHomes extends JavaPlugin implements Listener {
 
     @EventHandler public void onMenuClick(InventoryClickEvent e) {
         if (!(e.getWhoClicked() instanceof Player p) || !bedrockPlayers.contains(p.getUniqueId())) return;
-        if (!LEGACY.serialize(e.getView().title()).equals(LEGACY.serialize(LEGACY.deserialize("&8Your Homes")))) return;
+        String title = LEGACY.serialize(e.getView().title());
+        boolean homesMenu = title.equals(LEGACY.serialize(LEGACY.deserialize("&8Your Homes")));
+        boolean actionMenu = title.startsWith(LEGACY.serialize(LEGACY.deserialize("&8Home: ")));
+        if (!homesMenu && !actionMenu) return;
         e.setCancelled(true);
         if (e.getRawSlot() < 0 || e.getRawSlot() >= e.getView().getTopInventory().getSize()) return;
         ItemStack clicked = e.getCurrentItem();
         if (clicked == null || !clicked.hasItemMeta() || clicked.getItemMeta().displayName() == null) return;
         String display = LEGACY.serialize(clicked.getItemMeta().displayName());
-        if (display.contains("Close")) { p.closeInventory(); bedrockPlayers.remove(p.getUniqueId()); return; }
-        if (display.contains("Set a home")) { p.closeInventory(); p.sendMessage(LEGACY.deserialize("&eUse &f/sethome <name> &eto create a home.")); return; }
-        String name = display.replace("§6", "").replace("&6", "").trim().toLowerCase(Locale.ROOT);
-        if (!getHomes(p).containsKey(name)) return;
-        if (e.isRightClick()) {
-            getHomes(p).remove(name); saveHomes(); p.sendMessage(LEGACY.deserialize(msg("deleted", Map.of("home", name)))); openBedrockMenu(p);
-        } else teleportHome(p, name);
+        if (display.contains("Close")) { p.closeInventory(); bedrockPlayers.remove(p.getUniqueId()); bedrockSelectedHome.remove(p.getUniqueId()); return; }
+        if (homesMenu) {
+            if (display.contains("Set a home")) { p.closeInventory(); p.sendMessage(LEGACY.deserialize("&eUse &f/sethome <name> &eto create a home.")); return; }
+            if (display.contains("Empty Home Slot") || display.contains("Locked Home Slot") || display.contains("GRAY_STAINED_GLASS")) return;
+            String name = display.replace("§6", "").replace("&6", "").trim().toLowerCase(Locale.ROOT);
+            if (getHomes(p).containsKey(name)) openBedrockHomeActions(p, name);
+            return;
+        }
+        String name = bedrockSelectedHome.get(p.getUniqueId());
+        if (name == null || !getHomes(p).containsKey(name)) { openBedrockMenu(p); return; }
+        if (display.contains("Back")) { bedrockSelectedHome.remove(p.getUniqueId()); openBedrockMenu(p); return; }
+        if (display.contains("Teleport")) { bedrockSelectedHome.remove(p.getUniqueId()); teleportHome(p, name); return; }
+        if (display.contains("Rename")) { bedrockSelectedHome.remove(p.getUniqueId()); beginRename(p, name); return; }
+        if (display.contains("Delete")) {
+            getHomes(p).remove(name);
+            homeIcons.getOrDefault(p.getUniqueId(), Map.of()).remove(name);
+            saveHomes();
+            bedrockSelectedHome.remove(p.getUniqueId());
+            p.sendMessage(LEGACY.deserialize(msg("deleted", Map.of("home", name))));
+            openBedrockMenu(p);
+        }
     }
 
     @EventHandler public void onClose(org.bukkit.event.inventory.InventoryCloseEvent e) {
