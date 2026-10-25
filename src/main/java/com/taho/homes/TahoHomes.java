@@ -183,14 +183,18 @@ public final class TahoHomes extends JavaPlugin implements Listener {
 
         List<Object> actions = new ArrayList<>();
         for (String name : getHomes(p).keySet()) {
-            Object actionBuilder = actionClass.getMethod("builder", Component.class).invoke(null, Component.text("⌂ " + name));
-            Object click = ClickEvent.callback(audience -> {
+            ClickEvent click = ClickEvent.callback(audience -> {
                 if (p.isOnline()) Bukkit.getScheduler().runTask(this, () -> teleportHome(p, name));
             });
-            actionClass.getMethod("build").invoke(actionBuilder);
-            // API versions differ in callback setters; click event is applied through the action builder when available.
-            try { actionClass.getMethod("onClick", ClickEvent.class).invoke(actionBuilder, click); } catch (ReflectiveOperationException ignored) {}
-            actions.add(actionClass.getMethod("build").invoke(actionBuilder));
+            Object actionBuilder;
+            try {
+                actionBuilder = actionClass.getMethod("builder", ClickEvent.class).invoke(null, click);
+            } catch (NoSuchMethodException olderApi) {
+                actionBuilder = actionClass.getMethod("builder", Component.class).invoke(null, Component.text("⌂ " + name));
+                try { actionClass.getMethod("clickEvent", ClickEvent.class).invoke(actionBuilder, click); } catch (ReflectiveOperationException ignored) {}
+            }
+            try { actionBuilder.getClass().getMethod("label", Component.class).invoke(actionBuilder, Component.text("⌂ " + name)); } catch (ReflectiveOperationException ignored) {}
+            actions.add(actionBuilder.getClass().getMethod("build").invoke(actionBuilder));
         }
         if (actions.isEmpty()) actions.add(actionClass.getMethod("builder", Component.class).invoke(null, Component.text("No homes yet")).getClass().getMethod("build").invoke(actionClass.getMethod("builder", Component.class).invoke(null, Component.text("No homes yet"))));
         Object type = null;
