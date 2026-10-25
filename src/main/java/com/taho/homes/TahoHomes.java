@@ -154,7 +154,9 @@ public final class TahoHomes extends JavaPlugin implements Listener {
             if (!VALID_NAME.matcher(name).matches()) { send(p, "invalid-name"); return true; }
             LinkedHashMap<String, Location> map = getHomes(p);
             if (!map.containsKey(name) && map.size() >= homeLimit(p)) { send(p, "limit", "limit", String.valueOf(homeLimit(p))); return true; }
-            map.put(name, p.getLocation().clone()); saveHomes(); send(p, "set", "home", name); return true;
+            map.put(name, p.getLocation().clone());
+            homeIcons.computeIfAbsent(p.getUniqueId(), ignored -> new HashMap<>()).putIfAbsent(name, Material.RED_BED);
+            saveHomes(); send(p, "set", "home", name); return true;
         }
         if (cmd.equals("home")) {
             if (args.length == 0) { openHomes(p); return true; }
@@ -192,9 +194,15 @@ public final class TahoHomes extends JavaPlugin implements Listener {
     private void openNativeDialog(Player p) {
         LinkedHashMap<String, Location> playerHomes = getHomes(p);
         List<ActionButton> actions = new ArrayList<>();
+        List<DialogBody> body = new ArrayList<>();
+        body.add(DialogBody.plainMessage(
+                Component.text("Select a home to manage it. Homes: " + playerHomes.size() + " / " +
+                        (homeLimit(p) == Integer.MAX_VALUE ? "∞" : homeLimit(p))), 350));
         for (String name : playerHomes.keySet()) {
             Material icon = homeIcons.getOrDefault(p.getUniqueId(), Map.of()).getOrDefault(name, Material.RED_BED);
-            actions.add(ActionButton.builder(Component.text(iconDisplay(icon) + "  " + name))
+            body.add(DialogBody.item(new ItemStack(icon), DialogBody.plainMessage(Component.text(name)),
+                    true, true, 32, 32));
+            actions.add(ActionButton.builder(Component.text(name))
                     .tooltip(Component.text("Open options for " + name))
                     .width(180)
                     .action(DialogAction.staticAction(ClickEvent.runCommand("/tahohomes action " + name + " open")))
@@ -214,9 +222,7 @@ public final class TahoHomes extends JavaPlugin implements Listener {
                     .width(180).build());
         }
         DialogBase base = DialogBase.builder(Component.text("Your Homes"))
-                .body(List.of(DialogBody.plainMessage(
-                        Component.text("Select a home to manage it.\\nHomes: " + playerHomes.size() + " / " +
-                                (homeLimit(p) == Integer.MAX_VALUE ? "∞" : homeLimit(p))), 350)))
+                .body(body)
                 .canCloseWithEscape(true).build();
         Dialog dialog = Dialog.create(factory -> factory.empty().base(base).type(DialogType.multiAction(actions, null, 2)));
         p.showDialog(dialog);
@@ -241,7 +247,10 @@ public final class TahoHomes extends JavaPlugin implements Listener {
                         .width(180).action(DialogAction.staticAction(ClickEvent.runCommand("/tahohomes action " + name + " icons"))).build()
         );
         DialogBase base = DialogBase.builder(Component.text("Home: " + name))
-                .body(List.of(DialogBody.plainMessage(Component.text("Choose what to do with this home."), 300)))
+                .body(List.of(
+                        DialogBody.item(new ItemStack(icon), DialogBody.plainMessage(Component.text(name)),
+                                true, true, 48, 48),
+                        DialogBody.plainMessage(Component.text("Choose what to do with this home."), 300)))
                 .canCloseWithEscape(true).build();
         p.showDialog(Dialog.create(factory -> factory.empty().base(base).type(DialogType.multiAction(buttons, null, 2))));
     }
@@ -252,13 +261,17 @@ public final class TahoHomes extends JavaPlugin implements Listener {
                 Material.GRASS_BLOCK, Material.OAK_SAPLING, Material.CRAFTING_TABLE, Material.ANVIL, Material.GOLD_INGOT,
                 Material.DIAMOND_BLOCK, Material.TNT, Material.ENDER_PEARL};
         List<ActionButton> buttons = new ArrayList<>();
+        List<DialogBody> body = new ArrayList<>();
+        body.add(DialogBody.plainMessage(Component.text("Choose an actual Minecraft item for " + name + "."), 300));
         for (Material icon : icons) {
-            buttons.add(ActionButton.builder(Component.text(iconDisplay(icon) + " " + prettyMaterial(icon)))
+            body.add(DialogBody.item(new ItemStack(icon),
+                    DialogBody.plainMessage(Component.text(prettyMaterial(icon))), true, true, 32, 32));
+            buttons.add(ActionButton.builder(Component.text(prettyMaterial(icon)))
                     .tooltip(Component.text("Use " + prettyMaterial(icon) + " as the home icon"))
                     .width(180).action(DialogAction.staticAction(ClickEvent.runCommand("/tahohomes action " + name + " icon_" + icon.name()))).build());
         }
         DialogBase base = DialogBase.builder(Component.text("Choose Home Icon"))
-                .body(List.of(DialogBody.plainMessage(Component.text("Select an icon for " + name + "."), 300)))
+                .body(body)
                 .canCloseWithEscape(true).build();
         p.showDialog(Dialog.create(factory -> factory.empty().base(base).type(DialogType.multiAction(buttons, null, 2))));
     }
@@ -273,7 +286,8 @@ public final class TahoHomes extends JavaPlugin implements Listener {
             case "teleport" -> teleportHome(p, name);
             case "delete" -> {
                 getHomes(p).remove(name);
-                homeIcons.getOrDefault(p.getUniqueId(), Map.of()).remove(name);
+                Map<String, Material> icons = homeIcons.get(p.getUniqueId());
+                if (icons != null) icons.remove(name);
                 saveHomes();
                 p.sendMessage(LEGACY.deserialize(msg("deleted", Map.of("home", name))));
                 openNativeDialog(p);
