@@ -188,47 +188,85 @@ public final class TahoHomes extends JavaPlugin implements Listener {
 
     private void openHomes(Player p) {
         if (isBedrock(p)) { openBedrockMenu(p); return; }
-        openJavaHomesMenu(p);
+        openNativeDialog(p);
     }
 
-    private void openJavaHomesMenu(Player p) {
-        Inventory inv = Bukkit.createInventory(null, 54, LEGACY.deserialize("&8Your Homes"));
-        ItemStack filler = item(Material.GRAY_STAINED_GLASS_PANE, "&r", List.of());
-        for (int i = 0; i < inv.getSize(); i++) inv.setItem(i, filler);
+    // Java players use Paper's native dialog UI. Bedrock players continue using the
+    // existing Floodgate-compatible inventory menus below, unchanged.
+    private void openNativeDialog(Player p) {
         LinkedHashMap<String, Location> playerHomes = getHomes(p);
-        int slot = 0;
+        List<ActionButton> actions = new ArrayList<>();
+        List<DialogBody> body = new ArrayList<>();
+        body.add(DialogBody.plainMessage(
+                Component.text("Select a home to manage it. Homes: " + playerHomes.size() + " / " +
+                        (homeLimit(p) == Integer.MAX_VALUE ? "∞" : homeLimit(p))), 350));
         for (String name : playerHomes.keySet()) {
-            if (slot >= 45) break;
             Material icon = homeIcons.getOrDefault(p.getUniqueId(), Map.of()).getOrDefault(name, Material.RED_BED);
-            inv.setItem(slot++, item(icon, "&6" + name, List.of("&7Saved home", "&eClick to manage this home")));
+            body.add(DialogBody.item(new ItemStack(icon), DialogBody.plainMessage(Component.text(name)),
+                    true, true, 32, 32));
+            actions.add(ActionButton.builder(Component.text(name))
+                    .tooltip(Component.text("Open options for " + name))
+                    .width(180)
+                    .action(DialogAction.staticAction(ClickEvent.runCommand("/tahohomes action " + name + " open")))
+                    .build());
         }
-        inv.setItem(49, item(Material.LIME_BED, "&aSet a home", List.of("&7Use &f/sethome <name>")));
-        inv.setItem(45, item(Material.BARRIER, "&cClose", List.of()));
-        p.openInventory(inv);
-        javaMenuPlayers.add(p.getUniqueId());
+        if (playerHomes.size() < homeLimit(p)) {
+            String nextName = nextHomeName(playerHomes);
+            actions.add(ActionButton.builder(Component.text("＋  Set home " + nextName))
+                    .tooltip(Component.text("Save your current location as a new home"))
+                    .width(180)
+                    .action(DialogAction.staticAction(ClickEvent.runCommand("/sethome " + nextName)))
+                    .build());
+        }
+        if (actions.isEmpty()) {
+            actions.add(ActionButton.builder(Component.text("No homes yet"))
+                    .tooltip(Component.text("Create your first home with /sethome <name>"))
+                    .width(180).build());
+        }
+        DialogBase base = DialogBase.builder(Component.text("Your Homes"))
+                .body(body).canCloseWithEscape(true).build();
+        p.showDialog(Dialog.create(factory -> factory.empty().base(base)
+                .type(DialogType.multiAction(actions, null, 2))));
     }
 
-    private void openJavaHomeActions(Player p, String name) {
-        if (!getHomes(p).containsKey(name)) { openJavaHomesMenu(p); return; }
-        Inventory inv = Bukkit.createInventory(null, 27, LEGACY.deserialize("&8Home: " + name));
-        ItemStack filler = item(Material.GRAY_STAINED_GLASS_PANE, "&r", List.of());
-        for (int i = 0; i < inv.getSize(); i++) inv.setItem(i, filler);
+    private void openHomeActions(Player p, String name) {
+        if (!getHomes(p).containsKey(name)) {
+            send(p, "missing", "home", name);
+            openNativeDialog(p);
+            return;
+        }
         Material icon = homeIcons.getOrDefault(p.getUniqueId(), Map.of()).getOrDefault(name, Material.RED_BED);
-        inv.setItem(4, item(icon, "&6" + name, List.of("&7This home's icon")));
-        inv.setItem(10, item(Material.ENDER_PEARL, "&bTeleport", List.of("&7Teleport to this home")));
-        inv.setItem(12, item(Material.NAME_TAG, "&eRename", List.of("&7Rename this home")));
-        inv.setItem(14, item(Material.COMPASS, "&dChange Icon", List.of("&7Search all Minecraft items")));
-        inv.setItem(16, item(Material.RED_DYE, "&cDelete", List.of("&7Delete this home")));
-        inv.setItem(22, item(Material.ARROW, "&fBack", List.of("&7Return to your homes")));
-        javaSelectedHome.put(p.getUniqueId(), name);
-        p.openInventory(inv);
-        javaMenuPlayers.add(p.getUniqueId());
+        List<ActionButton> buttons = List.of(
+                ActionButton.builder(Component.text("Teleport"))
+                        .tooltip(Component.text("Teleport to this home"))
+                        .width(180).action(DialogAction.staticAction(ClickEvent.runCommand("/tahohomes action " + name + " teleport"))).build(),
+                ActionButton.builder(Component.text("Rename"))
+                        .tooltip(Component.text("Choose a new name for this home"))
+                        .width(180).action(DialogAction.staticAction(ClickEvent.runCommand("/tahohomes rename " + name))).build(),
+                ActionButton.builder(Component.text("Delete"))
+                        .tooltip(Component.text("Permanently delete this home"))
+                        .width(180).action(DialogAction.staticAction(ClickEvent.runCommand("/tahohomes action " + name + " delete"))).build(),
+                ActionButton.builder(Component.text("Change Icon"))
+                        .tooltip(Component.text("Current icon: " + icon.name()))
+                        .width(180).action(DialogAction.staticAction(ClickEvent.runCommand("/tahohomes action " + name + " icons"))).build(),
+                ActionButton.builder(Component.text("Back to Homes"))
+                        .tooltip(Component.text("Return to your homes"))
+                        .width(180).action(DialogAction.staticAction(ClickEvent.runCommand("/home"))).build()
+        );
+        DialogBase base = DialogBase.builder(Component.text("Home: " + name))
+                .body(List.of(
+                        DialogBody.item(new ItemStack(icon), DialogBody.plainMessage(Component.text(name)),
+                                true, true, 48, 48),
+                        DialogBody.plainMessage(Component.text("Choose what to do with this home."), 300)))
+                .canCloseWithEscape(true).build();
+        p.showDialog(Dialog.create(factory -> factory.empty().base(base)
+                .type(DialogType.multiAction(buttons, null, 2))));
     }
 
-    private void openIconSearch(Player p, String homeName, String initial) {
+    private void openIconSearch(Player p, String name, String initial) {
         DialogBase base = DialogBase.builder(Component.text("Search Minecraft Items"))
                 .body(List.of(DialogBody.plainMessage(
-                        Component.text("Type an item name, then press Search. Leave it empty to browse every item."), 300)))
+                        Component.text("Type an item name. Leave it empty to browse every Minecraft item."), 320)))
                 .inputs(List.of(DialogInput.text("query", Component.text("Item name"))
                         .width(300).labelVisible(true).initial(initial == null ? "" : initial)
                         .maxLength(64).build()))
@@ -239,107 +277,82 @@ public final class TahoHomes extends JavaPlugin implements Listener {
                 .action(DialogAction.customClick((view, audience) -> {
                     if (!(audience instanceof Player player)) return;
                     String query = view.getText("query");
-                    openIconResults(player, homeName, query == null ? "" : query.trim(), 0);
+                    openIconResults(player, name, query == null ? "" : query.trim(), 0);
                 }, ClickCallback.Options.builder().uses(1).build()))
                 .build();
-        ActionButton back = ActionButton.builder(Component.text("Cancel"))
+        ActionButton cancel = ActionButton.builder(Component.text("Cancel"))
                 .width(180)
-                .action(DialogAction.staticAction(ClickEvent.runCommand("/tahohomes action " + homeName + " open")))
+                .action(DialogAction.staticAction(ClickEvent.runCommand("/tahohomes action " + name + " open")))
                 .build();
-        p.showDialog(Dialog.create(factory -> factory.empty().base(base).type(DialogType.confirmation(search, back))));
+        p.showDialog(Dialog.create(factory -> factory.empty().base(base)
+                .type(DialogType.confirmation(search, cancel))));
     }
 
-    private void openIconResults(Player p, String homeName, String query, int page) {
-        if (!getHomes(p).containsKey(homeName)) { openJavaHomesMenu(p); return; }
+    private void openIconResults(Player p, String name, String query, int page) {
+        if (!getHomes(p).containsKey(name)) { openNativeDialog(p); return; }
         String normalized = query.toLowerCase(Locale.ROOT).replace(' ', '_');
         List<Material> matches = Arrays.stream(Material.values())
                 .filter(Material::isItem)
-                .filter(m -> normalized.isBlank()
-                        || m.name().toLowerCase(Locale.ROOT).contains(normalized)
-                        || prettyMaterial(m).toLowerCase(Locale.ROOT).contains(query.toLowerCase(Locale.ROOT)))
+                .filter(material -> normalized.isBlank()
+                        || material.name().toLowerCase(Locale.ROOT).contains(normalized)
+                        || prettyMaterial(material).toLowerCase(Locale.ROOT).contains(query.toLowerCase(Locale.ROOT)))
                 .sorted(Comparator.comparing(Material::name))
                 .toList();
-        int maxPage = Math.max(0, (matches.size() - 1) / 45);
+
+        final int pageSize = 20;
+        int maxPage = Math.max(0, (matches.size() - 1) / pageSize);
         int currentPage = Math.max(0, Math.min(page, maxPage));
-        Inventory inv = Bukkit.createInventory(null, 54, LEGACY.deserialize("&8Choose Icon: " + homeName));
-        ItemStack filler = item(Material.GRAY_STAINED_GLASS_PANE, "&r", List.of());
-        for (int i = 0; i < inv.getSize(); i++) inv.setItem(i, filler);
-        int from = currentPage * 45;
-        int to = Math.min(from + 45, matches.size());
+        int from = currentPage * pageSize;
+        int to = Math.min(from + pageSize, matches.size());
+        List<ActionButton> buttons = new ArrayList<>();
+        List<DialogBody> body = new ArrayList<>();
+        body.add(DialogBody.plainMessage(Component.text(
+                "Results for " + (query.isBlank() ? "all items" : "\"" + query + "\"") +
+                        " — " + matches.size() + " items. Page " + (currentPage + 1) + "/" + (maxPage + 1)), 350));
+
         for (int i = from; i < to; i++) {
             Material material = matches.get(i);
-            inv.setItem(i - from, item(material, "&f" + prettyMaterial(material),
-                    List.of("&7Minecraft item: &f" + material.name(), "&eClick to use this icon")));
+            body.add(DialogBody.item(new ItemStack(material),
+                    DialogBody.plainMessage(Component.text(prettyMaterial(material) + " (" + material.name() + ")")),
+                    true, true, 28, 28));
+            buttons.add(ActionButton.builder(Component.text(prettyMaterial(material)))
+                    .tooltip(Component.text("Use " + material.name() + " as this home's icon"))
+                    .width(220)
+                    .action(DialogAction.staticAction(ClickEvent.runCommand(
+                            "/tahohomes action " + name + " icon_" + material.name())))
+                    .build());
         }
-        inv.setItem(45, item(Material.OAK_SIGN, "&eSearch Items",
-                List.of("&7Current search: &f" + (query.isBlank() ? "All items" : query), "&eClick to search again")));
-        inv.setItem(48, item(Material.ARROW, "&fPrevious Page", List.of("&7Page " + (currentPage + 1) + " / " + (maxPage + 1))));
-        inv.setItem(49, item(Material.PAPER, "&bPage " + (currentPage + 1) + " / " + (maxPage + 1),
-                List.of("&7" + matches.size() + " matching items")));
-        inv.setItem(50, item(Material.ARROW, "&fNext Page", List.of("&7Page " + (currentPage + 1) + " / " + (maxPage + 1))));
-        inv.setItem(53, item(Material.BARRIER, "&cBack", List.of("&7Return to home options")));
-        iconPickerStates.put(p.getUniqueId(), new IconPickerState(homeName, query, currentPage));
-        p.openInventory(inv);
-        javaMenuPlayers.add(p.getUniqueId());
-        if (matches.isEmpty()) p.sendMessage(LEGACY.deserialize("&cNo Minecraft items matched that search."));
-    }
 
-    private void selectHomeIcon(Player p, String homeName, Material icon) {
-        if (!icon.isItem() || !getHomes(p).containsKey(homeName)) return;
-        homeIcons.computeIfAbsent(p.getUniqueId(), ignored -> new HashMap<>()).put(homeName, icon);
-        saveHomes();
-        p.sendMessage(LEGACY.deserialize("&aIcon updated to &f" + prettyMaterial(icon) + "&a."));
-        openJavaHomeActions(p, homeName);
-    }
+        if (matches.isEmpty()) {
+            body.add(DialogBody.plainMessage(Component.text("No items matched. Try a different search."), 300));
+        }
+        if (currentPage > 0) {
+            buttons.add(ActionButton.builder(Component.text("Previous Page"))
+                    .width(180)
+                    .action(DialogAction.customClick((view, audience) -> {
+                        if (audience instanceof Player player) openIconResults(player, name, query, currentPage - 1);
+                    }, ClickCallback.Options.builder().uses(1).build())).build());
+        }
+        if (currentPage < maxPage) {
+            buttons.add(ActionButton.builder(Component.text("Next Page"))
+                    .width(180)
+                    .action(DialogAction.customClick((view, audience) -> {
+                        if (audience instanceof Player player) openIconResults(player, name, query, currentPage + 1);
+                    }, ClickCallback.Options.builder().uses(1).build())).build());
+        }
+        buttons.add(ActionButton.builder(Component.text("Search Again"))
+                .width(180)
+                .action(DialogAction.staticAction(ClickEvent.runCommand("/tahohomes action " + name + " icons")))
+                .build());
+        buttons.add(ActionButton.builder(Component.text("Back"))
+                .width(180)
+                .action(DialogAction.staticAction(ClickEvent.runCommand("/tahohomes action " + name + " open")))
+                .build());
 
-    private void handleJavaMenuClick(Player p, InventoryClickEvent e, String title) {
-        e.setCancelled(true);
-        int raw = e.getRawSlot();
-        if (raw < 0 || raw >= e.getView().getTopInventory().getSize()) return;
-        ItemStack clicked = e.getCurrentItem();
-        if (clicked == null || !clicked.hasItemMeta() || clicked.getItemMeta().displayName() == null) return;
-        String display = LEGACY.serialize(clicked.getItemMeta().displayName());
-        if (title.equals(LEGACY.serialize(LEGACY.deserialize("&8Your Homes")))) {
-            if (display.contains("Close")) { p.closeInventory(); javaMenuPlayers.remove(p.getUniqueId()); return; }
-            if (display.contains("Set a home")) {
-                p.closeInventory(); javaMenuPlayers.remove(p.getUniqueId());
-                p.sendMessage(LEGACY.deserialize("&eUse &f/sethome <name> &eto create a home."));
-                return;
-            }
-            String name = display.replace("§6", "").replace("&6", "").trim().toLowerCase(Locale.ROOT);
-            if (getHomes(p).containsKey(name)) openJavaHomeActions(p, name);
-            return;
-        }
-        if (title.startsWith(LEGACY.serialize(LEGACY.deserialize("&8Home: ")))) {
-            String name = javaSelectedHome.get(p.getUniqueId());
-            if (name == null || !getHomes(p).containsKey(name)) { openJavaHomesMenu(p); return; }
-            if (display.contains("Back")) { javaSelectedHome.remove(p.getUniqueId()); openJavaHomesMenu(p); }
-            else if (display.contains("Teleport")) { javaSelectedHome.remove(p.getUniqueId()); teleportHome(p, name); }
-            else if (display.contains("Rename")) { javaSelectedHome.remove(p.getUniqueId()); beginRename(p, name); }
-            else if (display.contains("Change Icon")) openIconSearch(p, name, "");
-            else if (display.contains("Delete")) {
-                getHomes(p).remove(name);
-                Map<String, Material> icons = homeIcons.get(p.getUniqueId());
-                if (icons != null) icons.remove(name);
-                javaSelectedHome.remove(p.getUniqueId());
-                saveHomes();
-                p.sendMessage(LEGACY.deserialize(msg("deleted", Map.of("home", name))));
-                openJavaHomesMenu(p);
-            }
-            return;
-        }
-        if (title.startsWith(LEGACY.serialize(LEGACY.deserialize("&8Choose Icon: ")))) {
-            IconPickerState state = iconPickerStates.get(p.getUniqueId());
-            if (state == null) return;
-            if (raw < 45 && !display.equals("§r") && !display.isBlank() && clicked.getType().isItem()) {
-                selectHomeIcon(p, state.homeName(), clicked.getType());
-                return;
-            }
-            if (raw == 45) { openIconSearch(p, state.homeName(), state.query()); return; }
-            if (raw == 48) { openIconResults(p, state.homeName(), state.query(), state.page() - 1); return; }
-            if (raw == 50) { openIconResults(p, state.homeName(), state.query(), state.page() + 1); return; }
-            if (raw == 53) { iconPickerStates.remove(p.getUniqueId()); openJavaHomeActions(p, state.homeName()); }
-        }
+        DialogBase base = DialogBase.builder(Component.text("Choose Home Icon"))
+                .body(body).canCloseWithEscape(true).build();
+        p.showDialog(Dialog.create(factory -> factory.empty().base(base)
+                .type(DialogType.multiAction(buttons, null, 2))));
     }
 
     private void handleHomeAction(Player p, String[] args) {
@@ -348,20 +361,19 @@ public final class TahoHomes extends JavaPlugin implements Listener {
         String action = args[2].toLowerCase(Locale.ROOT);
         if (!getHomes(p).containsKey(name)) {
             send(p, "missing", "home", name);
-            openJavaHomesMenu(p);
+            openNativeDialog(p);
             return;
         }
         switch (action) {
-            case "open" -> openJavaHomeActions(p, name);
+            case "open" -> openHomeActions(p, name);
             case "teleport" -> teleportHome(p, name);
             case "delete" -> {
                 getHomes(p).remove(name);
                 Map<String, Material> icons = homeIcons.get(p.getUniqueId());
                 if (icons != null) icons.remove(name);
-                javaSelectedHome.remove(p.getUniqueId());
                 saveHomes();
                 p.sendMessage(LEGACY.deserialize(msg("deleted", Map.of("home", name))));
-                openJavaHomesMenu(p);
+                openNativeDialog(p);
             }
             case "icons" -> openIconSearch(p, name, "");
             default -> {
@@ -371,7 +383,10 @@ public final class TahoHomes extends JavaPlugin implements Listener {
                         p.sendMessage(LEGACY.deserialize("&cInvalid icon."));
                         return;
                     }
-                    selectHomeIcon(p, name, icon);
+                    homeIcons.computeIfAbsent(p.getUniqueId(), ignored -> new HashMap<>()).put(name, icon);
+                    saveHomes();
+                    p.sendMessage(LEGACY.deserialize("&aIcon updated for home &f" + name + "&a."));
+                    openHomeActions(p, name);
                 }
             }
         }
@@ -485,14 +500,6 @@ public final class TahoHomes extends JavaPlugin implements Listener {
 
     @EventHandler public void onMenuClick(InventoryClickEvent e) {
         if (!(e.getWhoClicked() instanceof Player p)) return;
-        String title = LEGACY.serialize(e.getView().title());
-        if (javaMenuPlayers.contains(p.getUniqueId()) &&
-                (title.equals(LEGACY.serialize(LEGACY.deserialize("&8Your Homes")))
-                || title.startsWith(LEGACY.serialize(LEGACY.deserialize("&8Home: ")))
-                || title.startsWith(LEGACY.serialize(LEGACY.deserialize("&8Choose Icon: "))))) {
-            handleJavaMenuClick(p, e, title);
-            return;
-        }
         if (!bedrockPlayers.contains(p.getUniqueId())) return;
         boolean homesMenu = title.equals(LEGACY.serialize(LEGACY.deserialize("&8Your Homes")));
         boolean actionMenu = title.startsWith(LEGACY.serialize(LEGACY.deserialize("&8Home: ")));
@@ -529,11 +536,6 @@ public final class TahoHomes extends JavaPlugin implements Listener {
     @EventHandler public void onClose(org.bukkit.event.inventory.InventoryCloseEvent e) {
         UUID uuid = e.getPlayer().getUniqueId();
         String title = LEGACY.serialize(e.getView().title());
-        if (title.equals(LEGACY.serialize(LEGACY.deserialize("&8Your Homes")))
-                || title.startsWith(LEGACY.serialize(LEGACY.deserialize("&8Home: ")))
-                || title.startsWith(LEGACY.serialize(LEGACY.deserialize("&8Choose Icon: ")))) {
-            if (!javaSelectedHome.containsKey(uuid) && !iconPickerStates.containsKey(uuid)) javaMenuPlayers.remove(uuid);
-        }
         if (title.equals(LEGACY.serialize(LEGACY.deserialize("&8Your Homes")))) bedrockPlayers.remove(uuid);
     }
 }
