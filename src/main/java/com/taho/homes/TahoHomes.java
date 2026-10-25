@@ -342,6 +342,41 @@ public final class TahoHomes extends JavaPlugin implements Listener {
         }
     }
 
+    private void handleHomeAction(Player p, String[] args) {
+        if (args.length < 3) return;
+        String name = args[1].toLowerCase(Locale.ROOT);
+        String action = args[2].toLowerCase(Locale.ROOT);
+        if (!getHomes(p).containsKey(name)) {
+            send(p, "missing", "home", name);
+            openJavaHomesMenu(p);
+            return;
+        }
+        switch (action) {
+            case "open" -> openJavaHomeActions(p, name);
+            case "teleport" -> teleportHome(p, name);
+            case "delete" -> {
+                getHomes(p).remove(name);
+                Map<String, Material> icons = homeIcons.get(p.getUniqueId());
+                if (icons != null) icons.remove(name);
+                javaSelectedHome.remove(p.getUniqueId());
+                saveHomes();
+                p.sendMessage(LEGACY.deserialize(msg("deleted", Map.of("home", name))));
+                openJavaHomesMenu(p);
+            }
+            case "icons" -> openIconSearch(p, name, "");
+            default -> {
+                if (action.startsWith("icon_")) {
+                    Material icon = Material.matchMaterial(action.substring(5).toUpperCase(Locale.ROOT));
+                    if (icon == null || !icon.isItem()) {
+                        p.sendMessage(LEGACY.deserialize("&cInvalid icon."));
+                        return;
+                    }
+                    selectHomeIcon(p, name, icon);
+                }
+            }
+        }
+    }
+
     private void beginRename(Player p, String oldName) {
         oldName = oldName.toLowerCase(Locale.ROOT);
         if (!getHomes(p).containsKey(oldName)) { send(p, "missing", "home", oldName); return; }
