@@ -335,7 +335,10 @@ public final class TahoHomes extends JavaPlugin implements Listener {
     }
 
     private String prettyMaterial(Material material) {
-        return material.name().toLowerCase(Locale.ROOT).replace('_', ' ').replaceAll("\\b\\w", m -> m.group().toUpperCase(Locale.ROOT));
+        String[] words = material.name().toLowerCase(Locale.ROOT).split("_");
+        StringBuilder result = new StringBuilder();
+        for (String word : words) if (!word.isEmpty()) result.append(Character.toUpperCase(word.charAt(0))).append(word.substring(1)).append(" ");
+        return result.toString().trim();
     }
 
     private String nextHomeName(Map<String, Location> playerHomes) {
