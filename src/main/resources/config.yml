@@ -1,0 +1,24 @@
+# Rank limits. LuckPerms groups are detected by permission nodes below.
+home-limits:
+  default: 5
+  tahoplus: 20
+  booster: 40
+rank-permissions:
+  tahoplus: tahohomes.rank.tahoplus
+  booster: tahohomes.rank.booster
+messages:
+  prefix: '&8[&6TahoHomes&8] '
+  no-permission: '&cYou do not have permission to do that.'
+  usage-set: '&eUsage: /sethome <name>'
+  usage-home: '&eUsage: /home <name>'
+  usage-delete: '&eUsage: /delhome <name>'
+  set: '&aHome &f%home% &ahas been set.'
+  deleted: '&aHome &f%home% &ahas been deleted.'
+  missing: '&cYou do not have a home named &f%home%&c.'
+  limit: '&cYou have reached your home limit (&f%limit%&c).'
+  teleported: '&aTeleporting to &f%home%&a.'
+  invalid-name: '&cHome names may only contain letters, numbers, underscores, and hyphens (max 16 characters).'
+  already-exists: '&cA home with that name already exists.'
+  no-homes: '&7You have no homes yet. Use &f/sethome <name>&7 to create one.'
+  renamed: '&aHome renamed to &f%home%&a.'
+  reload: '&aConfiguration reloaded.'
